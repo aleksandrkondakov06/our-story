@@ -9,6 +9,9 @@ const encoder = new TextEncoder();
 let frame = null;
 let documentUrl = null;
 let busy = false;
+let mediaController = null;
+let mediaUrls = [];
+let generation = 0;
 const bytes = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
 
 reveal.addEventListener('click', () => {
@@ -42,6 +45,27 @@ form.addEventListener('submit', async event => {
     let plaintext;
     try { plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, bytes(payload.data)); }
     catch { throw new Error('password'); }
+    const currentGeneration = ++generation;
+    mediaController = new AbortController();
+    const signal = mediaController.signal;
+    const mediaCache = new Map();
+    window.__PRIVATE_LOAD_ASSET__ = path => {
+      const item = payload.media?.[path];
+      if (!item || !/^media\/[a-f0-9]{64}\.enc$/.test(item.file) || item.mime !== 'video/mp4') return Promise.reject(new Error('media'));
+      if (!mediaCache.has(path)) {
+        const pending = (async () => {
+          const response = await fetch(new URL(item.file, location.href), { signal, credentials: 'omit' });
+          if (!response.ok) throw new Error('network');
+          const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes(item.iv) }, key, await response.arrayBuffer());
+          if (generation !== currentGeneration) throw new Error('locked');
+          const url = URL.createObjectURL(new Blob([plain], { type: item.mime }));
+          mediaUrls.push(url);
+          return url;
+        })().catch(error => { mediaCache.delete(path); throw error; });
+        mediaCache.set(path, pending);
+      }
+      return mediaCache.get(path);
+    };
     documentUrl = URL.createObjectURL(new Blob([plaintext], { type: 'text/html;charset=utf-8' }));
     frame = document.createElement('iframe');
     frame.title = 'Наша открытка';
@@ -64,10 +88,16 @@ form.addEventListener('submit', async event => {
 });
 
 lock.addEventListener('click', () => {
+  generation++;
+  mediaController?.abort();
+  mediaController = null;
+  window.__PRIVATE_LOAD_ASSET__ = undefined;
   frame?.remove(); // Удаление документа также останавливает музыку.
   frame = null;
   if (documentUrl) URL.revokeObjectURL(documentUrl);
   documentUrl = null;
+  mediaUrls.forEach(url => URL.revokeObjectURL(url));
+  mediaUrls = [];
   lock.hidden = true;
   gate.hidden = false;
   password.value = '';
