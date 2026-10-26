@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="form-action 'none'">
   <meta name="theme-color" content="#49352d">
   <meta name="description" content="Небольшой подарок. Только для тебя.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23962d3e'/%3E%3Ctext x='32' y='46' font-size='42' text-anchor='middle' fill='%23f5ebdd'%3E%E2%99%A1%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./gate.css?v=c32a121284d4">
+  <link rel="stylesheet" href="./gate.css?v=7774877990b7">
   <title>Только для тебя</title>
 </head>
 <body>
@@ -18,17 +19,17 @@
     <h1>Только для тебя</h1>
     <p class="intro">Вспомни нашу дату и введи наш пароль.</p>
     <form id="unlock-form">
-      <label for="day">В какой день сентября?</label>
+      <label for="day">Когда случился наш первый раз?</label>
       <div class="date-row"><select id="day" name="day" required aria-label="День сентября"><option value="" disabled selected>Выбери число</option></select><span aria-hidden="true">сентября</span></div>
       <label for="password">Наш пароль</label>
-      <div class="input-row"><input id="password" name="password" type="password" autocomplete="current-password" required spellcheck="false" autocapitalize="off"><button id="reveal" type="button" aria-label="Показать пароль" aria-pressed="false">Показать</button></div>
+      <div class="input-row"><input id="password" class="is-masked" name="password" type="text" inputmode="text" lang="ru" autocomplete="off" required spellcheck="false" autocorrect="off" autocapitalize="off"><button id="reveal" type="button" aria-label="Показать пароль" aria-pressed="false">Показать</button></div>
       <button id="unlock" type="submit">Открыть открытку <span aria-hidden="true">↗</span></button>
       <p id="status" role="status" aria-live="polite"></p>
     </form>
-    <p class="note">Наша история откроется, когда дата и пароль совпадут.</p>
+    <p class="note">Наша история</p>
   </main>
   <button id="lock" type="button" hidden aria-label="Закрыть открытку и вернуться к паролю">Закрыть ♡</button>
   <noscript>Для открытия зашифрованной открытки нужен JavaScript.</noscript>
-  <script src="./gate.js?v=42d9fd1c2ba9" defer></script>
+  <script src="./gate.js?v=aec5c8f3aac2" defer></script>
 </body>
 </html>

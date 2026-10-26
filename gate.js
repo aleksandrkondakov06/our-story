@@ -15,13 +15,22 @@ let mediaController = null;
 let mediaUrls = [];
 let generation = 0;
 const bytes = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
+// Обычное текстовое поле не включает системный режим ввода только ASCII.
+// В поддерживающих браузерах символы скрываются CSS, включая повторный вход.
+const canMaskText = CSS.supports('-webkit-text-security', 'disc');
+let passwordVisible = false;
+function setPasswordVisible(visible) {
+  passwordVisible = visible;
+  password.type = canMaskText || visible ? 'text' : 'password';
+  password.classList.toggle('is-masked', !visible);
+  reveal.textContent = visible ? 'Скрыть' : 'Показать';
+  reveal.setAttribute('aria-label', visible ? 'Скрыть пароль' : 'Показать пароль');
+  reveal.setAttribute('aria-pressed', String(visible));
+}
+setPasswordVisible(false);
 
 reveal.addEventListener('click', () => {
-  const shown = password.type === 'password';
-  password.type = shown ? 'text' : 'password';
-  reveal.textContent = shown ? 'Скрыть' : 'Показать';
-  reveal.setAttribute('aria-label', shown ? 'Скрыть пароль' : 'Показать пароль');
-  reveal.setAttribute('aria-pressed', String(shown));
+  setPasswordVisible(!passwordVisible);
 });
 
 form.addEventListener('submit', async event => {
@@ -112,9 +121,6 @@ lock.addEventListener('click', () => {
   gate.hidden = false;
   password.value = '';
   day.value = '';
-  password.type = 'password';
-  reveal.textContent = 'Показать';
-  reveal.setAttribute('aria-label', 'Показать пароль');
-  reveal.setAttribute('aria-pressed', 'false');
+  setPasswordVisible(false);
   password.focus();
 });
