@@ -5,6 +5,8 @@ const status = document.querySelector('#status');
 const gate = document.querySelector('#gate');
 const lock = document.querySelector('#lock');
 const reveal = document.querySelector('#reveal');
+const day = document.querySelector('#day');
+for (let value = 1; value <= 30; value++) day.add(new Option(String(value), String(value)));
 const encoder = new TextEncoder();
 let frame = null;
 let documentUrl = null;
@@ -25,6 +27,12 @@ reveal.addEventListener('click', () => {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (busy) return;
+  const selectedDay = Number(day.value);
+  if (!Number.isInteger(selectedDay) || selectedDay < 1 || selectedDay > 30) {
+    status.textContent = 'Выбери день сентября.';
+    day.focus();
+    return;
+  }
   if (!window.isSecureContext || !crypto.subtle) {
     status.textContent = 'Открой эту ссылку по HTTPS в современном браузере.';
     return;
@@ -37,10 +45,11 @@ form.addEventListener('submit', async event => {
     const response = await fetch(new URL('./payload.json', location.href), { cache: 'no-store', credentials: 'omit' });
     if (!response.ok) throw new Error('network');
     const payload = await response.json();
-    if (payload.version !== 1 || payload.iterations !== 600000) throw new Error('format');
+    if (payload.version !== 2 || payload.iterations !== 600000) throw new Error('format');
     const salt = bytes(payload.salt), iv = bytes(payload.iv);
     if (salt.length !== 16 || iv.length !== 12) throw new Error('format');
-    const material = await crypto.subtle.importKey('raw', encoder.encode(password.value), 'PBKDF2', false, ['deriveKey']);
+    const credential = JSON.stringify([password.value.normalize('NFC'), 9, selectedDay]);
+    const material = await crypto.subtle.importKey('raw', encoder.encode(credential), 'PBKDF2', false, ['deriveKey']);
     const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: payload.iterations }, material, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
     let plaintext;
     try { plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, bytes(payload.data)); }
@@ -75,10 +84,11 @@ form.addEventListener('submit', async event => {
     gate.hidden = true;
     lock.hidden = false;
     password.value = '';
+    day.value = '';
     status.textContent = '';
     frame.focus();
   } catch (error) {
-    status.textContent = error.message === 'password' ? 'Пароль не подошёл. Попробуй ещё раз.' : 'Не получилось загрузить открытку. Проверь интернет и попробуй ещё раз.';
+    status.textContent = error.message === 'password' ? 'Дата или пароль не совпали. Попробуй ещё раз.' : 'Не получилось загрузить открытку. Проверь интернет и попробуй ещё раз.';
     password.focus();
     password.select();
   } finally {
@@ -101,6 +111,7 @@ lock.addEventListener('click', () => {
   lock.hidden = true;
   gate.hidden = false;
   password.value = '';
+  day.value = '';
   password.type = 'password';
   reveal.textContent = 'Показать';
   reveal.setAttribute('aria-label', 'Показать пароль');
