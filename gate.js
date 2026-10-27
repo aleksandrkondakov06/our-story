@@ -13,6 +13,27 @@ let busy = false;
 let mediaController = null;
 let mediaUrls = [];
 let generation = 0;
+let payloadRequest = null;
+let cancelStartup = null;
+function loadPayload() {
+  if (!payloadRequest) {
+    payloadRequest = fetch(new URL('./payload.json', location.href), {
+      cache: 'no-cache',
+      credentials: 'omit',
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('network');
+        return response.json();
+      })
+      .catch((error) => {
+        payloadRequest = null;
+        throw error;
+      });
+  }
+  return payloadRequest;
+}
+// Небольшой шифротекст скачивается, пока вводят дату и пароль. Ключа ещё нет.
+loadPayload().catch(() => {});
 const bytes = (value) => Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 // Обычное текстовое поле не включает системный режим ввода только ASCII.
 // В поддерживающих браузерах символы скрываются CSS, включая повторный вход.
@@ -48,14 +69,10 @@ form.addEventListener('submit', async (event) => {
   busy = true;
   button.disabled = true;
   status.textContent = 'Открываю наш маленький мир…';
+  const currentGeneration = ++generation;
   try {
     // На сервер уходит только запрос шифротекста; пароль не отправляется.
-    const response = await fetch(new URL('./payload.json', location.href), {
-      cache: 'no-store',
-      credentials: 'omit',
-    });
-    if (!response.ok) throw new Error('network');
-    const payload = await response.json();
+    const payload = await loadPayload();
     if (payload.version !== 2 || payload.iterations !== 600000) throw new Error('format');
     const salt = bytes(payload.salt),
       iv = bytes(payload.iv);
@@ -81,13 +98,17 @@ form.addEventListener('submit', async (event) => {
     } catch {
       throw new Error('password');
     }
-    const currentGeneration = ++generation;
+    if (generation !== currentGeneration) throw new Error('locked');
     mediaController = new AbortController();
     const signal = mediaController.signal;
     const mediaCache = new Map();
     window.__PRIVATE_LOAD_ASSET__ = (path) => {
       const item = payload.media?.[path];
-      if (!item || !/^media\/[a-f0-9]{64}\.enc$/.test(item.file) || item.mime !== 'video/mp4')
+      if (
+        !item ||
+        !/^media\/[a-f0-9]{64}\.enc$/.test(item.file) ||
+        !['video/mp4', 'image/webp', 'image/jpeg', 'image/png', 'image/avif'].includes(item.mime)
+      )
         return Promise.reject(new Error('media'));
       if (!mediaCache.has(path)) {
         const pending = (async () => {
@@ -113,18 +134,48 @@ form.addEventListener('submit', async (event) => {
       }
       return mediaCache.get(path);
     };
-    documentUrl = URL.createObjectURL(new Blob([plaintext], { type: 'text/html;charset=utf-8' }));
+    const font = Array.from(document.styleSheets)
+      .flatMap((sheet) => Array.from(sheet.cssRules))
+      .find(
+        (rule) => rule.type === CSSRule.FONT_FACE_RULE && rule.style.fontFamily.includes('Araboto'),
+      )
+      ?.style.getPropertyValue('src')
+      .match(/data:font\/ttf;base64,[A-Za-z0-9+/=]+/)?.[0];
+    if (!font) throw new Error('font');
+    const html = new TextDecoder().decode(plaintext).replaceAll('__PRIVATE_ARABOTO_FONT__', font);
+    documentUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     frame = document.createElement('iframe');
     frame.title = 'Остров нашей истории';
     frame.allow = 'autoplay';
+    frame.style.opacity = '0';
+    frame.style.pointerEvents = 'none';
+    let readyTimer;
+    const ready = new Promise((resolve, reject) => {
+      window.__PRIVATE_READY__ = resolve;
+      cancelStartup = () => reject(new Error('locked'));
+      readyTimer = setTimeout(() => reject(new Error('startup')), 30000);
+    });
     frame.src = documentUrl;
     document.body.append(frame);
+    try {
+      await ready;
+    } finally {
+      clearTimeout(readyTimer);
+      window.__PRIVATE_READY__ = undefined;
+      cancelStartup = null;
+    }
+    if (generation !== currentGeneration) throw new Error('locked');
+    frame.style.opacity = '';
+    frame.style.pointerEvents = '';
     gate.hidden = true;
     password.value = '';
     day.value = '';
     status.textContent = '';
     frame.focus();
   } catch (error) {
+    if (error.message === 'locked' || generation !== currentGeneration) return;
+    payloadRequest = null;
+    if (frame) clearSession();
     status.textContent =
       error.message === 'password'
         ? 'Дата или пароль не совпали. Попробуй ещё раз.'
@@ -139,6 +190,12 @@ form.addEventListener('submit', async (event) => {
 
 function clearSession() {
   generation++;
+  cancelStartup?.();
+  cancelStartup = null;
+  window.__PRIVATE_READY__ = undefined;
+  busy = false;
+  button.disabled = false;
+  status.textContent = '';
   mediaController?.abort();
   mediaController = null;
   window.__PRIVATE_LOAD_ASSET__ = undefined;
