@@ -5,6 +5,11 @@ const status = document.querySelector('#status');
 const gate = document.querySelector('#gate');
 const reveal = document.querySelector('#reveal');
 const day = document.querySelector('#day');
+const loaderUrl = new URL(document.currentScript.src);
+const siteRoot = new URL(document.currentScript.dataset.siteRoot || './', location.href);
+const payloadUrl = new URL('./payload.json', loaderUrl);
+window.__PRIVATE_PROTOCOL__ = 3;
+window.__PRIVATE_SITE_ROOT__ = siteRoot.href;
 for (let value = 1; value <= 30; value++) day.add(new Option(String(value), String(value)));
 const encoder = new TextEncoder();
 let frame = null;
@@ -17,7 +22,7 @@ let payloadRequest = null;
 let cancelStartup = null;
 function loadPayload() {
   if (!payloadRequest) {
-    payloadRequest = fetch(new URL('./payload.json', location.href), {
+    payloadRequest = fetch(payloadUrl, {
       cache: 'no-cache',
       credentials: 'omit',
     })
@@ -102,7 +107,59 @@ form.addEventListener('submit', async (event) => {
     mediaController = new AbortController();
     const signal = mediaController.signal;
     const mediaCache = new Map();
-    window.__PRIVATE_LOAD_ASSET__ = (path) => {
+    const queue = [];
+    const jobs = new Map();
+    let active = 0;
+    function pump() {
+      while (!signal.aborted && active < 3) {
+        let index = queue.findIndex((job) => !job.background);
+        if (index < 0 && active < 2 && !document.hidden) index = queue.length ? 0 : -1;
+        if (index < 0) return;
+        const job = queue.splice(index, 1)[0];
+        active++;
+        job
+          .run()
+          .then(job.resolve, job.reject)
+          .finally(() => {
+            active--;
+            pump();
+          });
+      }
+    }
+    document.addEventListener('visibilitychange', pump);
+    signal.addEventListener(
+      'abort',
+      () => {
+        document.removeEventListener('visibilitychange', pump);
+        queue.splice(0).forEach((job) => job.reject(new Error('locked')));
+      },
+      { once: true },
+    );
+    async function download(item) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (signal.aborted) throw new Error('locked');
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        signal.addEventListener('abort', cancel, { once: true });
+        const timer = setTimeout(cancel, 20000);
+        try {
+          const response = await fetch(new URL(item.file, siteRoot), {
+            signal: controller.signal,
+            credentials: 'omit',
+          });
+          if (!response.ok) throw new Error(`network:${response.status}`);
+          return await response.arrayBuffer();
+        } catch (error) {
+          if (signal.aborted || attempt === 2 || /network:4(?!08|29)/.test(error.message))
+            throw error;
+        } finally {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', cancel);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+    window.__PRIVATE_LOAD_ASSET__ = (path, { background = false } = {}) => {
       const item = payload.media?.[path];
       if (
         !item ||
@@ -111,27 +168,31 @@ form.addEventListener('submit', async (event) => {
       )
         return Promise.reject(new Error('media'));
       if (!mediaCache.has(path)) {
-        const pending = (async () => {
-          const response = await fetch(new URL(item.file, location.href), {
-            signal,
-            credentials: 'omit',
-          });
-          if (!response.ok) throw new Error('network');
+        const run = async () => {
           const plain = await crypto.subtle.decrypt(
             { name: 'AES-GCM', iv: bytes(item.iv) },
             key,
-            await response.arrayBuffer(),
+            await download(item),
           );
           if (generation !== currentGeneration) throw new Error('locked');
           const url = URL.createObjectURL(new Blob([plain], { type: item.mime }));
           mediaUrls.push(url);
           return url;
-        })().catch((error) => {
-          mediaCache.delete(path);
-          throw error;
-        });
+        };
+        const pending = new Promise((resolve, reject) => {
+          const job = { run, resolve, reject, background };
+          jobs.set(path, job);
+          queue.push(job);
+        })
+          .catch((error) => {
+            mediaCache.delete(path);
+            throw error;
+          })
+          .finally(() => jobs.delete(path));
         mediaCache.set(path, pending);
       }
+      if (!background && jobs.has(path)) jobs.get(path).background = false;
+      pump();
       return mediaCache.get(path);
     };
     const font = Array.from(document.styleSheets)
