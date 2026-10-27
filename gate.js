@@ -3,7 +3,6 @@ const password = document.querySelector('#password');
 const button = document.querySelector('#unlock');
 const status = document.querySelector('#status');
 const gate = document.querySelector('#gate');
-const lock = document.querySelector('#lock');
 const reveal = document.querySelector('#reveal');
 const day = document.querySelector('#day');
 for (let value = 1; value <= 30; value++) day.add(new Option(String(value), String(value)));
@@ -121,7 +120,6 @@ form.addEventListener('submit', async (event) => {
     frame.src = documentUrl;
     document.body.append(frame);
     gate.hidden = true;
-    lock.hidden = false;
     password.value = '';
     day.value = '';
     status.textContent = '';
@@ -139,7 +137,7 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-lock.addEventListener('click', () => {
+function clearSession() {
   generation++;
   mediaController?.abort();
   mediaController = null;
@@ -150,10 +148,9 @@ lock.addEventListener('click', () => {
   documentUrl = null;
   mediaUrls.forEach((url) => URL.revokeObjectURL(url));
   mediaUrls = [];
-  lock.hidden = true;
   gate.hidden = false;
   password.value = '';
   day.value = '';
   setPasswordVisible(false);
-  password.focus();
-});
+}
+window.addEventListener('pagehide', clearSession);
