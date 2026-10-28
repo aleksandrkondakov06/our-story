@@ -12,11 +12,15 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23962d3e'/%3E%3Ctext x='32' y='46' font-size='42' text-anchor='middle' fill='%23f5ebdd'%3E%E2%99%A1%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="./releases/b2ac57e2261dde79/gate.css?v=1faa37495429" />
+    <link rel="stylesheet" href="./releases/a7545de7e6d6eebd/gate.css?v=573175b88065" />
     <title>Только для тебя</title>
   </head>
   <body>
-    <main id="gate">
+    <div id="access-loading" role="status" aria-live="polite">
+      <span aria-hidden="true">♡</span>
+      <p>Наша история</p>
+    </div>
+    <main id="gate" hidden>
       <span class="heart" aria-hidden="true">♡</span>
       <p class="eyebrow">Маленький мир для двоих</p>
       <h1>Только для тебя</h1>
@@ -46,9 +50,6 @@
             Показать
           </button>
         </div>
-        <label class="remember-row"
-          ><input id="remember" type="checkbox" checked /> Запомнить вход на 30 дней</label
-        >
         <button id="unlock" type="submit">Открыть остров <span aria-hidden="true">↗</span></button>
         <p id="status" role="status" aria-live="polite"></p>
         <button id="retry-access" type="button" hidden>Повторить вход</button>
@@ -56,6 +57,6 @@
       <p class="note">Наша история</p>
     </main>
     <noscript>Для открытия острова нужен JavaScript.</noscript>
-    <script src="./releases/b2ac57e2261dde79/gate.js?v=415f57acf4c6" defer></script>
+    <script src="./releases/a7545de7e6d6eebd/gate.js?v=0bff3990dfe1" defer></script>
   </body>
 </html>

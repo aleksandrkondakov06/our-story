@@ -5,7 +5,7 @@ const status = document.querySelector('#status');
 const gate = document.querySelector('#gate');
 const reveal = document.querySelector('#reveal');
 const day = document.querySelector('#day');
-const remember = document.querySelector('#remember');
+const loading = document.querySelector('#access-loading');
 const retry = document.querySelector('#retry-access');
 const loaderUrl = new URL(document.currentScript.src);
 const siteRoot = new URL(document.currentScript.dataset.siteRoot || './', location.href);
@@ -114,7 +114,13 @@ function checkExpiry() {
   }
 }
 async function restoreAccess() {
-  if (busy || frame || !window.isSecureContext || !window.crypto?.subtle) return;
+  if (busy || frame) return;
+  if (!window.isSecureContext || !window.crypto?.subtle) {
+    showLogin();
+    return;
+  }
+  gate.hidden = true;
+  loading.hidden = false;
   busy = true;
   button.disabled = true;
   retry.hidden = true;
@@ -133,6 +139,11 @@ async function restoreAccess() {
   busy = false;
   button.disabled = false;
   if (saved) await openIsland({ saved });
+  else showLogin();
+}
+function showLogin() {
+  loading.hidden = true;
+  gate.hidden = false;
 }
 function loadPayload() {
   if (!payloadRequest) {
@@ -181,10 +192,10 @@ form.addEventListener('submit', async (event) => {
     day.focus();
     return;
   }
-  await openIsland({ selectedDay, save: remember.checked });
+  await openIsland({ selectedDay });
 });
 
-async function openIsland({ selectedDay, save = false, saved = null }) {
+async function openIsland({ selectedDay, saved = null }) {
   if (busy) return;
   if (!window.isSecureContext || !window.crypto?.subtle) {
     status.textContent = 'Открой эту ссылку по HTTPS в современном браузере.';
@@ -370,8 +381,8 @@ async function openIsland({ selectedDay, save = false, saved = null }) {
         expiresAt: issuedAt + sessionLifetime,
       };
       try {
-        await sessionStore(save ? 'put' : 'delete', save ? session : undefined);
-        if (save) saved = session;
+        await sessionStore('put', session);
+        saved = session;
       } catch {
         /* Запрет хранилища не блокирует обычный вход. */
       }
@@ -383,6 +394,7 @@ async function openIsland({ selectedDay, save = false, saved = null }) {
     frame.style.opacity = '';
     frame.style.pointerEvents = '';
     gate.hidden = true;
+    loading.hidden = true;
     password.value = '';
     day.value = '';
     status.textContent = '';
@@ -419,7 +431,7 @@ async function openIsland({ selectedDay, save = false, saved = null }) {
   }
 }
 
-function clearSession() {
+function clearSession(showForm = true) {
   clearTimeout(expiryTimer);
   sessionExpiresAt = 0;
   generation++;
@@ -436,12 +448,13 @@ function clearSession() {
   frame = null;
   mediaUrls.forEach((url) => URL.revokeObjectURL(url));
   mediaUrls = [];
-  gate.hidden = false;
+  gate.hidden = !showForm;
+  loading.hidden = showForm;
   password.value = '';
   day.value = '';
   setPasswordVisible(false);
 }
-window.addEventListener('pagehide', clearSession);
+window.addEventListener('pagehide', () => clearSession(false));
 window.addEventListener('pageshow', (event) => {
   if (event.persisted) restoreAccess();
 });
