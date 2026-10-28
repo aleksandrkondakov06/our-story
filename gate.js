@@ -165,19 +165,28 @@ function loadPayload() {
 // Небольшой шифротекст скачивается, пока вводят дату и пароль. Ключа ещё нет.
 loadPayload().catch(() => {});
 const bytes = (value) => Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-// Обычное текстовое поле не включает системный режим ввода только ASCII.
-// В поддерживающих браузерах символы скрываются CSS, включая повторный вход.
-const canMaskText = CSS.supports('-webkit-text-security', 'disc');
+// Нативная/CSS-защита поля может ограничивать раскладки на macOS.
+// Значение остаётся в обычном input; отдельный слой рисует только точки.
+const passwordMask = document.querySelector('#password-mask');
+const passwordDots = passwordMask.firstElementChild;
 let passwordVisible = false;
+function syncPasswordMask() {
+  passwordDots.textContent = passwordVisible ? '' : '•'.repeat([...password.value].length);
+  passwordDots.style.transform = `translateX(${-password.scrollLeft}px)`;
+}
 function setPasswordVisible(visible) {
   passwordVisible = visible;
-  password.type = canMaskText || visible ? 'text' : 'password';
   password.classList.toggle('is-masked', !visible);
+  passwordMask.hidden = visible;
+  syncPasswordMask();
   reveal.textContent = visible ? 'Скрыть' : 'Показать';
   reveal.setAttribute('aria-label', visible ? 'Скрыть пароль' : 'Показать пароль');
   reveal.setAttribute('aria-pressed', String(visible));
 }
 setPasswordVisible(false);
+for (const event of ['input', 'scroll', 'compositionend']) {
+  password.addEventListener(event, syncPasswordMask);
+}
 
 reveal.addEventListener('click', () => {
   setPasswordVisible(!passwordVisible);
@@ -344,7 +353,7 @@ async function openIsland({ selectedDay, saved = null }) {
         (rule) => rule.type === CSSRule.FONT_FACE_RULE && rule.style.fontFamily.includes('Araboto'),
       )
       ?.style.getPropertyValue('src')
-      .match(/data:font\/ttf;base64,[A-Za-z0-9+/=]+/)?.[0];
+      .match(/data:font\/(?:ttf|woff2);base64,[A-Za-z0-9+/=]+/)?.[0];
     if (!font) throw new Error('font');
     const html = new TextDecoder().decode(plaintext).replaceAll('__PRIVATE_ARABOTO_FONT__', font);
     frame = document.createElement('iframe');
@@ -396,6 +405,7 @@ async function openIsland({ selectedDay, saved = null }) {
     gate.hidden = true;
     loading.hidden = true;
     password.value = '';
+    setPasswordVisible(false);
     day.value = '';
     status.textContent = '';
     frame.focus();
