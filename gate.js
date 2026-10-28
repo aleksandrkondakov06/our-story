@@ -13,7 +13,6 @@ window.__PRIVATE_SITE_ROOT__ = siteRoot.href;
 for (let value = 1; value <= 30; value++) day.add(new Option(String(value), String(value)));
 const encoder = new TextEncoder();
 let frame = null;
-let documentUrl = null;
 let busy = false;
 let mediaController = null;
 let mediaUrls = [];
@@ -196,7 +195,14 @@ form.addEventListener('submit', async (event) => {
       return mediaCache.get(path);
     };
     const font = Array.from(document.styleSheets)
-      .flatMap((sheet) => Array.from(sheet.cssRules))
+      .flatMap((sheet) => {
+        // Встроенный браузер может добавить сторонний CSS с закрытым CSSOM.
+        try {
+          return Array.from(sheet.cssRules);
+        } catch {
+          return [];
+        }
+      })
       .find(
         (rule) => rule.type === CSSRule.FONT_FACE_RULE && rule.style.fontFamily.includes('Araboto'),
       )
@@ -204,7 +210,6 @@ form.addEventListener('submit', async (event) => {
       .match(/data:font\/ttf;base64,[A-Za-z0-9+/=]+/)?.[0];
     if (!font) throw new Error('font');
     const html = new TextDecoder().decode(plaintext).replaceAll('__PRIVATE_ARABOTO_FONT__', font);
-    documentUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     frame = document.createElement('iframe');
     frame.title = 'Остров нашей истории';
     frame.allow = 'autoplay';
@@ -216,7 +221,10 @@ form.addEventListener('submit', async (event) => {
       cancelStartup = () => reject(new Error('locked'));
       readyTimer = setTimeout(() => reject(new Error('startup')), 30000);
     });
-    frame.src = documentUrl;
+    // Telegram iOS отклоняет навигацию на blob:, но разрешает about:srcdoc.
+    // HTML уже проверен AES-GCM и остаётся только в памяти текущего сеанса.
+    frame.srcdoc = html;
+    password.blur();
     document.body.append(frame);
     try {
       await ready;
@@ -240,7 +248,9 @@ form.addEventListener('submit', async (event) => {
     status.textContent =
       error.message === 'password'
         ? 'Дата или пароль не совпали. Попробуй ещё раз.'
-        : 'Не получилось загрузить остров. Проверь интернет и попробуй ещё раз.';
+        : error.message === 'startup'
+          ? 'Браузер не смог открыть остров. Обнови страницу и попробуй ещё раз.'
+          : 'Не получилось загрузить остров. Проверь интернет и попробуй ещё раз.';
     password.focus();
     password.select();
   } finally {
@@ -262,8 +272,6 @@ function clearSession() {
   window.__PRIVATE_LOAD_ASSET__ = undefined;
   frame?.remove(); // Удаление документа также останавливает видео.
   frame = null;
-  if (documentUrl) URL.revokeObjectURL(documentUrl);
-  documentUrl = null;
   mediaUrls.forEach((url) => URL.revokeObjectURL(url));
   mediaUrls = [];
   gate.hidden = false;
