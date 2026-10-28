@@ -5,6 +5,8 @@ const status = document.querySelector('#status');
 const gate = document.querySelector('#gate');
 const reveal = document.querySelector('#reveal');
 const day = document.querySelector('#day');
+const remember = document.querySelector('#remember');
+const retry = document.querySelector('#retry-access');
 const loaderUrl = new URL(document.currentScript.src);
 const siteRoot = new URL(document.currentScript.dataset.siteRoot || './', location.href);
 const payloadUrl = new URL('./payload.json', loaderUrl);
@@ -19,6 +21,119 @@ let mediaUrls = [];
 let generation = 0;
 let payloadRequest = null;
 let cancelStartup = null;
+const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
+let sessionExpiresAt = 0;
+let expiryTimer = null;
+
+// Сохраняем только готовый AES-ключ, без пароля и исходного материала PBKDF2.
+// Соль сайта постоянна между выпусками; каждый шифротекст получает новый IV.
+function sessionStore(action, value) {
+  return new Promise((resolve, reject) => {
+    let db,
+      transaction,
+      finished = false;
+    const finish = (error, result) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (error) {
+        try {
+          transaction?.abort();
+        } catch {}
+      }
+      db?.close();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const timer = setTimeout(() => finish(new Error('storage')), 2000);
+    try {
+      const request = indexedDB.open('our-story-access', 1);
+      request.onupgradeneeded = () => {
+        if (finished) return request.transaction.abort();
+        request.result.createObjectStore('sessions');
+      };
+      request.onerror = () => finish(new Error('storage'));
+      request.onblocked = () => finish(new Error('storage'));
+      request.onsuccess = () => {
+        db = request.result;
+        if (finished) return db.close();
+        db.onversionchange = () => db.close();
+        try {
+          transaction = db.transaction('sessions', action === 'get' ? 'readonly' : 'readwrite');
+          const store = transaction.objectStore('sessions');
+          const operation =
+            action === 'put'
+              ? store.put(value, siteRoot.pathname)
+              : action === 'delete' && !value
+                ? store.delete(siteRoot.pathname)
+                : store.get(siteRoot.pathname);
+          if (action === 'delete' && value) {
+            operation.onsuccess = () => {
+              // Старая вкладка не удаляет более свежий вход другой вкладки.
+              if (operation.result?.expiresAt === value.expiresAt) store.delete(siteRoot.pathname);
+            };
+          }
+          transaction.oncomplete = () => finish(null, operation.result);
+          transaction.onerror = transaction.onabort = () => finish(new Error('storage'));
+        } catch (error) {
+          finish(error);
+        }
+      };
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+function validSession(session) {
+  const now = Date.now();
+  return (
+    session?.version === 2 &&
+    Number.isSafeInteger(session.issuedAt) &&
+    Number.isSafeInteger(session.expiresAt) &&
+    session.issuedAt <= now &&
+    session.expiresAt - session.issuedAt === sessionLifetime &&
+    session.expiresAt > now &&
+    session.key instanceof CryptoKey &&
+    session.key.algorithm.name === 'AES-GCM' &&
+    session.key.algorithm.length === 256 &&
+    !session.key.extractable &&
+    session.key.usages.length === 1 &&
+    session.key.usages[0] === 'decrypt'
+  );
+}
+function checkExpiry() {
+  clearTimeout(expiryTimer);
+  if (!sessionExpiresAt) return;
+  if (Date.now() >= sessionExpiresAt) {
+    sessionStore('delete', { expiresAt: sessionExpiresAt }).catch(() => {});
+    clearSession();
+    status.textContent = 'Прошло 30 дней. Вспомни нашу дату и введи пароль ещё раз.';
+  } else {
+    // setTimeout ограничен 2^31−1 мс; дополнительно проверяем возврат в браузер.
+    expiryTimer = setTimeout(checkExpiry, Math.min(sessionExpiresAt - Date.now(), 60 * 60 * 1000));
+  }
+}
+async function restoreAccess() {
+  if (busy || frame || !window.isSecureContext || !window.crypto?.subtle) return;
+  busy = true;
+  button.disabled = true;
+  retry.hidden = true;
+  const currentGeneration = ++generation;
+  let saved;
+  try {
+    saved = await sessionStore('get');
+    if (saved && !validSession(saved)) {
+      await sessionStore('delete', saved);
+      saved = null;
+    }
+  } catch {
+    saved = null;
+  }
+  if (generation !== currentGeneration) return;
+  busy = false;
+  button.disabled = false;
+  if (saved) await openIsland({ saved });
+}
 function loadPayload() {
   if (!payloadRequest) {
     payloadRequest = fetch(payloadUrl, {
@@ -66,12 +181,18 @@ form.addEventListener('submit', async (event) => {
     day.focus();
     return;
   }
-  if (!window.isSecureContext || !crypto.subtle) {
+  await openIsland({ selectedDay, save: remember.checked });
+});
+
+async function openIsland({ selectedDay, save = false, saved = null }) {
+  if (busy) return;
+  if (!window.isSecureContext || !window.crypto?.subtle) {
     status.textContent = 'Открой эту ссылку по HTTPS в современном браузере.';
     return;
   }
   busy = true;
   button.disabled = true;
+  retry.hidden = true;
   status.textContent = 'Открываю наш маленький мир…';
   const currentGeneration = ++generation;
   try {
@@ -81,21 +202,25 @@ form.addEventListener('submit', async (event) => {
     const salt = bytes(payload.salt),
       iv = bytes(payload.iv);
     if (salt.length !== 16 || iv.length !== 12) throw new Error('format');
-    const credential = JSON.stringify([password.value.normalize('NFC'), 9, selectedDay]);
-    const material = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(credential),
-      'PBKDF2',
-      false,
-      ['deriveKey'],
-    );
-    const key = await crypto.subtle.deriveKey(
-      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: payload.iterations },
-      material,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['decrypt'],
-    );
+    if (saved && !validSession(saved)) throw new Error('expired');
+    let key = saved?.key;
+    if (!key) {
+      const credential = JSON.stringify([password.value.normalize('NFC'), 9, selectedDay]);
+      const material = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(credential),
+        'PBKDF2',
+        false,
+        ['deriveKey'],
+      );
+      key = await crypto.subtle.deriveKey(
+        { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: payload.iterations },
+        material,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt'],
+      );
+    }
     let plaintext;
     try {
       plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, bytes(payload.data));
@@ -103,6 +228,7 @@ form.addEventListener('submit', async (event) => {
       throw new Error('password');
     }
     if (generation !== currentGeneration) throw new Error('locked');
+    if (saved && !validSession(saved)) throw new Error('expired');
     mediaController = new AbortController();
     const signal = mediaController.signal;
     const mediaCache = new Map();
@@ -234,6 +360,26 @@ form.addEventListener('submit', async (event) => {
       cancelStartup = null;
     }
     if (generation !== currentGeneration) throw new Error('locked');
+    if (saved && !validSession(saved)) throw new Error('expired');
+    if (!saved) {
+      const issuedAt = Date.now();
+      const session = {
+        version: 2,
+        key,
+        issuedAt,
+        expiresAt: issuedAt + sessionLifetime,
+      };
+      try {
+        await sessionStore(save ? 'put' : 'delete', save ? session : undefined);
+        if (save) saved = session;
+      } catch {
+        /* Запрет хранилища не блокирует обычный вход. */
+      }
+    }
+    if (generation !== currentGeneration) throw new Error('locked');
+    sessionExpiresAt = saved?.expiresAt || 0;
+    checkExpiry();
+    if (generation !== currentGeneration) throw new Error('locked');
     frame.style.opacity = '';
     frame.style.pointerEvents = '';
     gate.hidden = true;
@@ -244,22 +390,38 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     if (error.message === 'locked' || generation !== currentGeneration) return;
     payloadRequest = null;
-    if (frame) clearSession();
+    clearSession();
+    const errorGeneration = generation;
+    if (saved && ['password', 'expired'].includes(error.message)) {
+      await sessionStore('delete', saved).catch(() => {});
+    }
+    if (generation !== errorGeneration) return;
     status.textContent =
-      error.message === 'password'
-        ? 'Дата или пароль не совпали. Попробуй ещё раз.'
-        : error.message === 'startup'
-          ? 'Браузер не смог открыть остров. Обнови страницу и попробуй ещё раз.'
-          : 'Не получилось загрузить остров. Проверь интернет и попробуй ещё раз.';
-    password.focus();
-    password.select();
+      error.message === 'expired'
+        ? 'Прошло 30 дней. Введи дату и пароль ещё раз.'
+        : saved && error.message === 'password'
+          ? 'Сохранённый вход больше не подходит. Введи дату и пароль ещё раз.'
+          : error.message === 'password'
+            ? 'Дата или пароль не совпали. Попробуй ещё раз.'
+            : error.message === 'startup'
+              ? 'Браузер не смог открыть остров. Обнови страницу и попробуй ещё раз.'
+              : 'Не получилось загрузить остров. Проверь интернет и попробуй ещё раз.';
+    retry.hidden = !saved || ['password', 'expired'].includes(error.message);
+    if (!saved) {
+      password.focus();
+      password.select();
+    }
   } finally {
-    busy = false;
-    button.disabled = false;
+    if (generation === currentGeneration) {
+      busy = false;
+      button.disabled = false;
+    }
   }
-});
+}
 
 function clearSession() {
+  clearTimeout(expiryTimer);
+  sessionExpiresAt = 0;
   generation++;
   cancelStartup?.();
   cancelStartup = null;
@@ -280,3 +442,11 @@ function clearSession() {
   setPasswordVisible(false);
 }
 window.addEventListener('pagehide', clearSession);
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) restoreAccess();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkExpiry();
+});
+retry.addEventListener('click', restoreAccess);
+restoreAccess();

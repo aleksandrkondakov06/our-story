@@ -188,3 +188,25 @@ iframe {
 #password:not(.is-masked) {
   -webkit-text-security: none;
 }
+.remember-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 0;
+  min-height: 32px;
+  cursor: pointer;
+}
+.remember-row input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  accent-color: #e8d3b6;
+}
+#retry-access {
+  border: 1px solid #d1b29165;
+  border-radius: 6px;
+  padding: 12px 18px;
+  background: transparent;
+  color: #fff4e6;
+}
